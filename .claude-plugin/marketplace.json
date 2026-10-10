@@ -1,0 +1,13 @@
+{
+  "name": "prompt-enhancer",
+  "description": "Rewrites a rough prompt into a structured one before you send it.",
+  "owner": {
+    "name": "Taha-Aalam"
+  },
+  "plugins": [
+    {
+      "name": "prompt-enhancer",
+      "source": "./"
+    }
+  ]
+}

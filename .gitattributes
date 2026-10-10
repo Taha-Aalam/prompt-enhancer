@@ -1,0 +1,5 @@
+# Keep line endings as written, on every platform.
+* text=auto eol=lf
+
+# The engine writes these on load.
+.claude-plugin/types/
