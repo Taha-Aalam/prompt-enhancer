@@ -37,6 +37,8 @@ const applyEnhancement = async ($: any) => {
     model: 'haiku',
     prompt: buildEnhancePrompt(box.text, installed),
     system: 'You rewrite prompts. You answer with JSON only.',
+    // A stalled provider must not hold the composer open; this resolves `aborted`.
+    timeoutMs: 15_000,
   })
   if (!completion.isAnswered) {
     $.ui.status('prompt-enhancer: the rewrite did not come back, draft left alone')
