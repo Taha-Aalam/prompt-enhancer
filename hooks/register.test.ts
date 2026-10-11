@@ -8,9 +8,30 @@ const draw = ($: any) =>
 const press = ($: any, key: string) => $.ui.press({ plugin: 'prompt-enhancer', key })
 const NL = String.fromCharCode(10)
 
+/**
+ * Every engine call the mod makes on the way to a rewrite, faked. A test may
+ * swap any of them: each event may be registered only once, so `over` is
+ * applied as the registration itself rather than as a second one.
+ */
+const standIns = (on: any, over: Record<string, () => any> = {}) => {
+  const fake = (event: string, answer: () => any) =>
+    on(event, over[event] ? over[event] : answer)
+  fake('ui.render', () => ({ type: 'Box', children: [] }))
+  fake('prompt.read', () => ({ value: { text: 'make it better', cursor: 15 } }))
+  fake('prompt.fill', () => ({ isFilled: true }))
+  fake('model.fork', () => ({ value: { isAnswered: true, text: '{"text":"rewritten"}' } }))
+  fake('ui.status', () => ({ value: undefined }))
+  fake('ui.log', () => ({ value: undefined }))
+}
+
 test('the band offers Enhance', async ($, on) => {
-  on('ui.render', () => ({ type: 'Box', children: [] }))
+  standIns(on)
   expect(JSON.stringify(await draw($, on))).toContain('"label":"Enhance"')
+})
+
+test('the Enhance button carries an e hotkey', async ($, on) => {
+  standIns(on)
+  expect(JSON.stringify(await draw($, on))).toContain('"hotkey":"e"')
 })
 
 const FILES: Record<string, string> = {
@@ -33,22 +54,28 @@ test('skills are read from a faked filesystem', async ($, on) => {
     const body = m ? FILES[m[1]] : undefined
     return body === undefined ? { deny: 'no such file' } : { value: body }
   })
-  on('ui.render', () => ({ type: 'Box', children: [] }))
+  standIns(on)
 
   await $.session.start({ cwd: 'C:\\tmp' })
   expect(JSON.stringify(await draw($, on))).toContain('Enhance')
 })
 
-test('the enhance prompt names skills', async () => {
-  const text = buildEnhancePrompt('make it better', [{ name: 'dataviz', description: 'Charts' }])
+test('the rewrite prompt names the project and the skills', () => {
+  const text = buildEnhancePrompt(
+    'make it better',
+    [{ name: 'dataviz', description: 'Charts' }],
+    { cwd: 'C:\\work\\app', claudeMd: 'Use tabs.' },
+  )
   expect(text).toContain('dataviz')
+  expect(text).toContain('C:\\work\\app')
+  expect(text).toContain('Use tabs.')
 })
 
-test('a model answer that is not JSON fails soft', async () => {
+test('a model answer that is not JSON fails soft', () => {
   expect(parseEnhance('sorry, I cannot')).toBe(null)
 })
 
-test('a well-formed answer parses', async () => {
+test('a well-formed answer parses', () => {
   const parsed = parseEnhance(JSON.stringify({
     skills: ['dataviz'], questions: ['One dataset or many?'], result: 'A chart.', text: 'Body.',
   }))
@@ -57,26 +84,51 @@ test('a well-formed answer parses', async () => {
 })
 
 test('a refused fill is reported, not thrown', async ($, on) => {
-  on('ui.render', () => ({ type: 'Box', children: [] }))
-  on('prompt.read', () => ({ value: { text: 'make it better', cursor: 15 } }))
-  on('prompt.fill', () => ({ isFilled: false, refusal: 'dialog' }))
-  on('model.complete', () => ({ value: { isAnswered: true, text: '{"text":"rewritten"}' } }))
-  on('ui.status', () => ({ value: undefined }))
-  on('ui.log', () => ({ value: undefined }))
+  standIns(on, { 'prompt.fill': () => ({ isFilled: false, refusal: 'dialog' }) })
   await draw($, on)
   await press($, 'enhance')
-  await draw($, on)
-  expect(true).toBe(true)
+  // The band still offers Revert, because nothing was applied.
+  expect(JSON.stringify(await draw($, on))).toContain('"label":"Enhance"')
 })
 
 test('a successful fill switches the band to Revert', async ($, on) => {
-  on('ui.render', () => ({ type: 'Box', children: [] }))
-  on('prompt.read', () => ({ value: { text: 'make it better', cursor: 15 } }))
-  on('prompt.fill', () => ({ isFilled: true }))
-  on('model.complete', () => ({ value: { isAnswered: true, text: '{"text":"rewritten"}' } }))
-  on('ui.status', () => ({ value: undefined }))
-  on('ui.log', () => ({ value: undefined }))
+  standIns(on)
   await draw($, on)
   await press($, 'enhance')
   expect(JSON.stringify(await draw($, on))).toContain('"label":"Revert"')
+})
+
+test('a failing model call is shown, and the draft is left alone', async ($, on) => {
+  // The bug this mod shipped with: its model call threw against some providers,
+  // and the `void` a press runs under swallowed that whole, so the person saw
+  // only a repeated "the rewrite did not come back" and no draft.
+  standIns(on, {
+    'model.fork': () => {
+      throw new Error("undefined is not an object (evaluating 'e.flatMap')")
+    },
+  })
+  await draw($, on)
+  await press($, 'enhance')
+  await press($, 'enhance')
+  const band = JSON.stringify(await draw($, on))
+  // Whatever the engine reports, it is put in front of the person rather than
+  // swallowed, and nothing was rewritten, so Enhance is still what is offered.
+  expect(band).toContain('"color":"error"')
+  expect(band).toContain('"label":"Enhance"')
+})
+
+test('a call that came back unanswered names the reason', async ($, on) => {
+  standIns(on, {
+    'model.fork': () => ({ value: { isAnswered: false, reason: 'api-error', status: 429, error: 'rate_limit' } }),
+  })
+  await draw($, on)
+  await press($, 'enhance')
+  expect(JSON.stringify(await draw($, on))).toContain('429')
+})
+
+test('no turn to fork from is named, not swallowed', async ($, on) => {
+  standIns(on, { 'model.fork': () => ({ value: { isAnswered: false, reason: 'nothing-to-fork' } }) })
+  await draw($, on)
+  await press($, 'enhance')
+  expect(JSON.stringify(await draw($, on))).toContain('send a message first')
 })
