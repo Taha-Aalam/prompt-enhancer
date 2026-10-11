@@ -16,15 +16,49 @@ Answer `y` to add the marketplace, then choose the user scope.
 
 ## Use
 
-The band above your prompt carries the control. Click **Enhance**, or reach the band
-(ctrl+x tab, or a click on it) and press `e`, to rewrite the rough prompt sitting in your
-composer. Once a rewrite is in the box the button becomes **Revert** (`r`), which puts your
-original draft back.
+The band above your prompt carries the control: `🪄 Prompt Enhancer   e: [ Enhance ]`.
+
+Click it to rewrite the rough prompt in your composer. Once a rewrite is in the box the button
+becomes `r: [ Revert ]`, which puts your original draft back.
 
 You can also run `/prompt-enhance` from anywhere.
 
 Either way the rewrite lands **in the composer, not in the conversation**. Read it, edit it,
 and send it yourself — nothing is submitted without you.
+
+## Keyboard
+
+Two ways to press it, and the second is the one to set up.
+
+**`ctrl+e`** rewrites, **`ctrl+r`** reverts, from the composer, with no focus to move first.
+To turn them on, add this to `~/.claude/keybindings.json` (create it with `/keybindings`):
+
+```json
+{
+  "$schema": "https://www.schemastore.org/claude-code-keybindings.json",
+  "bindings": [
+    {
+      "context": "Global",
+      "bindings": {
+        "ctrl+e": "confirm:previousField",
+        "ctrl+r": "permission:toggleDebug"
+      }
+    }
+  ]
+}
+```
+
+Changes apply immediately — no restart. The two action names look odd, and that is the point:
+they are the ones Claude Code documents as actions it *does not respond to*, so they are free for
+a button to borrow and no built-in feature can take the chord away later. Swap them for any other
+key you like; only the two actions must stay.
+
+**`e`** and **`r`** also work, but only once the band holds the keyboard — press `ctrl+x` `tab`
+(within 3 seconds of each other), or click the band, then press the letter. If your terminal or
+multiplexer eats the `ctrl+x` chord, use the `ctrl+e` route above, which is a single keystroke
+and does not depend on a chord.
+
+Either way `esc` returns focus to the composer.
 
 ## What the rewrite knows
 
@@ -53,9 +87,12 @@ rather than failing quietly.
 ## Limits worth knowing
 
 - It reads `~/.claude/skills` off disk to name installed skills, because no API lists them.
-- `e` and `r` are read by the band, not the composer, so they need the band's focus
-  (ctrl+x tab or a click on it). They are deliberately not bound globally — that would take
-  those letters away from everything you type.
+- `e` and `r` are read by the band, not the composer, so on their own they need the band's
+  focus (ctrl+x tab, or a click on it). They are deliberately not bound globally — that would
+  take those letters away from everything you type. The `ctrl+e` / `ctrl+r` bindings above are
+  the chord route, and they leave typing alone.
+- A chord only fires while no dialog is up and nothing else has claimed the action. If
+  `ctrl+e` stops working, check that no other plugin has bound it too.
 - A failed rewrite leaves your draft exactly as it was and says why, in the band.
 
 ## Development

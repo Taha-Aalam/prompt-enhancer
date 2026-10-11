@@ -26,12 +26,28 @@ const standIns = (on: any, over: Record<string, () => any> = {}) => {
 
 test('the band offers Enhance', async ($, on) => {
   standIns(on)
-  expect(JSON.stringify(await draw($, on))).toContain('"label":"Enhance"')
+  expect(JSON.stringify(await draw($, on))).toContain('[ Enhance ]')
 })
 
 test('the Enhance button carries an e hotkey', async ($, on) => {
   standIns(on)
   expect(JSON.stringify(await draw($, on))).toContain('"hotkey":"e"')
+})
+
+// The chord that presses this from the prompt, as opposed to the band hotkey.
+// It is what makes the button reachable without ctrl+x tab, which a terminal
+// that eats a chord on a `ctrl+x` prefix would otherwise swallow.
+test('the Enhance button carries a chord action', async ($, on) => {
+  standIns(on)
+  expect(JSON.stringify(await draw($, on))).toContain('"action":"confirm:previousField"')
+})
+
+test('the band leads with its mark and keeps air around the button', async ($, on) => {
+  standIns(on)
+  const band = JSON.stringify(await draw($, on))
+  expect(band).toContain('🪄 Prompt Enhancer')
+  // `gap` is what separates the label from the button; without it they run together.
+  expect(band).toContain('"gap":2')
 })
 
 const FILES: Record<string, string> = {
@@ -88,14 +104,16 @@ test('a refused fill is reported, not thrown', async ($, on) => {
   await draw($, on)
   await press($, 'enhance')
   // The band still offers Revert, because nothing was applied.
-  expect(JSON.stringify(await draw($, on))).toContain('"label":"Enhance"')
+  expect(JSON.stringify(await draw($, on))).toContain('[ Enhance ]')
 })
 
 test('a successful fill switches the band to Revert', async ($, on) => {
   standIns(on)
   await draw($, on)
   await press($, 'enhance')
-  expect(JSON.stringify(await draw($, on))).toContain('"label":"Revert"')
+  const band = JSON.stringify(await draw($, on))
+  expect(band).toContain('[ Revert ]')
+  expect(band).toContain('"action":"permission:toggleDebug"')
 })
 
 test('a failing model call is shown, and the draft is left alone', async ($, on) => {
@@ -114,7 +132,7 @@ test('a failing model call is shown, and the draft is left alone', async ($, on)
   // Whatever the engine reports, it is put in front of the person rather than
   // swallowed, and nothing was rewritten, so Enhance is still what is offered.
   expect(band).toContain('"color":"error"')
-  expect(band).toContain('"label":"Enhance"')
+  expect(band).toContain('[ Enhance ]')
 })
 
 test('a call that came back unanswered names the reason', async ($, on) => {

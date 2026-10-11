@@ -14,6 +14,29 @@ const context = atom({ plugin: 'prompt-enhancer', key: 'context' } as const, { c
 /** How much of the project's CLAUDE.md is worth sending. */
 const MAX_CLAUDE_MD = 4_000
 
+/**
+ * Two engine actions borrowed as carriers for chords the person binds.
+ *
+ * A Button's `action` is pressed from the prompt — no `ctrl+x tab`, no focus
+ * dance — as long as no engine handler of that action is mounted. These two are
+ * the ones the keybinding reference documents as ones "Claude Code doesn't
+ * respond to", so no built-in feature can take the chord out from under them.
+ * Neither is bound by default; binding them in `~/.claude/keybindings.json` is
+ * what puts `ctrl+e` and `ctrl+r` on these buttons (the README has the file).
+ */
+const ENHANCE_ACTION = 'confirm:previousField'
+const REVERT_ACTION = 'permission:toggleDebug'
+
+/**
+ * The label a control is drawn with.
+ *
+ * `plain` already draws the hotkey in the accent color, a colon, then this, so
+ * the band reads `e: [ Enhance ]` and the letter stays visible. But `plain` wins
+ * over `variant`, so the surface draws no chrome box beside it and `borderStyle`
+ * cannot add one — hence the brackets, which draw the same on every surface.
+ */
+const boxed = (label: string) => `[ ${label} ]`
+
 /** The reason a call did not come back, in words fit to show the person. */
 const why = (result: any): string => {
   if (result?.reason === 'api-error') {
@@ -154,31 +177,37 @@ export const register: Register = on => {
     const { Box, Text, Button } = $.ui.resolve(e)
 
     return (
-      <Box>
-        <Text dimColor>Prompt Enhancer</Text>
+      // `gap` is what puts air between the label and the button; the band lays
+      // these out in a row, so without it they run together as one string.
+      <Box gap={2}>
+        <Text dimColor>🪄 Prompt Enhancer</Text>
         {now.kind === 'working' ? (
           <Text color="warning">rewriting…</Text>
         ) : now.kind === 'failed' ? (
           <Text color="error">{now.reason}</Text>
         ) : null}
         {last === null ? (
-          // `hotkey` takes one lowercase letter, and the band holds the keyboard
-          // once the person reaches it — after ctrl+x tab, or a click on the band.
-          // That is the only modifier-free way to press this without typing the
-          // letter into the composer: no engine keybinding action runs a command.
+          // Two ways in, deliberately. `hotkey` is the bare letter, and it reads
+          // once the band holds the keyboard (ctrl+x tab, or a click on it) —
+          // never the composer, so typing "enhance" is still typing.
+          // `action` is the escape from that: bind `ctrl+e` to the action in
+          // ~/.claude/keybindings.json and the chord presses this from the
+          // prompt, which survives a terminal that eats the chord above.
           <Button
             key="enhance"
-            label="Enhance"
+            label={boxed('Enhance')}
             plain
             hotkey="e"
+            action={ENHANCE_ACTION}
             onPress={() => { void enhance($) }}
           />
         ) : (
           <Button
             key="revert"
-            label="Revert"
+            label={boxed('Revert')}
             plain
             hotkey="r"
+            action={REVERT_ACTION}
             onPress={() => { void revert($) }}
           />
         )}
