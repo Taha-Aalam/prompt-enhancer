@@ -1,20 +1,78 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Applied, Skill } from '../types'
+import type { Applied, Phase, Skill } from '../types'
 import { buildEnhancePrompt, parseEnhance } from './enhance'
 import { listSkillsWith } from './skills'
 
 const applied = atom({ plugin: 'prompt-enhancer', key: 'applied' } as const, null)
 const skills = atom({ plugin: 'prompt-enhancer', key: 'skills' } as const, [] as Skill[])
+const phase = atom({ plugin: 'prompt-enhancer', key: 'phase' } as const, { kind: 'idle' } as Phase)
+/** The project the session is in, as the rewrite needs to name it. */
+const context = atom({ plugin: 'prompt-enhancer', key: 'context' } as const, { cwd: '', claudeMd: '' })
+
+/** How much of the project's CLAUDE.md is worth sending. */
+const MAX_CLAUDE_MD = 4_000
+
+/** The reason a call did not come back, in words fit to show the person. */
+const why = (result: any): string => {
+  if (result?.reason === 'api-error') {
+    const status = result.status === null || result.status === undefined ? '' : ` (${result.status})`
+    return `the model refused the request${status}: ${result.error ?? 'unknown error'}`
+  }
+  if (result?.reason === 'empty-reply') return 'the model answered with no text'
+  if (result?.reason === 'aborted') return 'the call was cut before it finished'
+  if (result?.reason === 'nothing-to-fork') return 'no turn in this session yet — send a message first'
+  return 'the call did not come back'
+}
+
+/**
+ * The one model call the mod makes.
+ *
+ * `$.model.complete` is the natural spelling, and it is what this used: on a
+ * machine whose provider answers a non-streaming `/v1/messages` with an
+ * OpenAI-shaped body (`choices[0].message.content` as a string, no `content`
+ * array), the engine's own `.flatMap` over that reply throws
+ * (`undefined is not an object (evaluating 'e.flatMap')`) and takes the click's
+ * `void` promise down with it, so nothing was ever reported and the draft never
+ * changed. `$.model.fork` asks the same model over the engine's streaming path,
+ * where that provider is correct, and resolves to a result instead of throwing.
+ *
+ * It takes only `{ prompt }` — no model, timeout or signal — and appends the
+ * instruction to the conversation as the main thread last sent it. That last
+ * part is checked: the fork adds no rows to the transcript, and it needs one
+ * turn in the session before it can answer (`nothing-to-fork`).
+ */
+const ask = async ($: any, instruction: string): Promise<string | { why: string }> => {
+  const result: any = await $.model.fork({ prompt: instruction })
+  return result.isAnswered === true ? result.text : { why: why(result) }
+}
+
+/**
+ * The project's own instructions, so a rewrite can use the project's language
+ * rather than generic ones. A missing or unreadable file is not a failure: the
+ * rewrite simply goes without it.
+ */
+const readProjectGuide = async ($: any): Promise<string> => {
+  // A relative path resolves under the session's working directory.
+  try {
+    const text = await $.fs.read('CLAUDE.md')
+    return typeof text === 'string' ? text.slice(0, MAX_CLAUDE_MD) : ''
+  } catch {
+    return ''
+  }
+}
 
 const applyText = async ($: any, before: string, after: string) => {
   const filled = await $.prompt.fill({ text: after, mode: 'replace' })
   if (!filled.isFilled) {
-    $.ui.status(`prompt-enhancer: box would not take it (${filled.refusal ?? 'unknown'})`)
-    return
+    $.ui.status(`the prompt bar would not take it: ${filled.refusal ?? 'unknown refusal'}`)
+    await update($, phase, () => ({ kind: 'failed', reason: 'the prompt bar refused the rewrite' }))
+    return false
   }
   await update($, applied, () => ({ before, after }))
+  await update($, phase, () => ({ kind: 'idle' }))
+  return true
 }
 
 const revert = async ($: any) => {
@@ -22,63 +80,107 @@ const revert = async ($: any) => {
   if (last === null) return
   const filled = await $.prompt.fill({ text: last.before, mode: 'replace' })
   if (!filled.isFilled) {
-    $.ui.status(`prompt-enhancer: box would not take the revert (${filled.refusal ?? 'unknown'})`)
+    $.ui.status(`the prompt bar would not take the revert: ${filled.refusal ?? 'unknown refusal'}`)
     return
   }
   await update($, applied, () => null)
 }
 
-const applyEnhancement = async ($: any) => {
+const enhance = async ($: any) => {
   const box = await $.prompt.read()
-  if (box.text.trim() === '') return
-  $.ui.status('prompt-enhancer: enhancing')
-  const installed = await read($, skills)
-  const completion = await $.model.complete({
-    model: 'haiku',
-    prompt: buildEnhancePrompt(box.text, installed),
-    system: 'You rewrite prompts. You answer with JSON only.',
-    // A stalled provider must not hold the composer open; this resolves `aborted`.
-    timeoutMs: 15_000,
-  })
-  if (!completion.isAnswered) {
-    $.ui.status('prompt-enhancer: the rewrite did not come back, draft left alone')
+  if (box.text.trim() === '') {
+    $.ui.status('there is nothing in the prompt bar to enhance')
     return
   }
-  const parsed = parseEnhance(completion.text)
-  if (parsed === null) {
-    $.ui.status('prompt-enhancer: could not read the rewrite, draft left alone')
-    return
+  await update($, phase, () => ({ kind: 'working' }))
+  $.ui.status('rewriting the draft…')
+
+  try {
+    const installed = await read($, skills)
+    const project = await read($, context)
+    const answer = await ask($, buildEnhancePrompt(box.text, installed, project))
+
+    if (typeof answer !== 'string') {
+      const reason = `${answer.why}; the draft is unchanged`
+      $.ui.status(reason)
+      await update($, phase, () => ({ kind: 'failed', reason }))
+      return
+    }
+    const parsed = parseEnhance(answer)
+    if (parsed === null) {
+      $.ui.status('the rewrite was not in the form asked for; the draft is unchanged')
+      await update($, phase, () => ({ kind: 'failed', reason: 'the rewrite was not in the form asked for' }))
+      return
+    }
+    $.ui.log(`skills ${JSON.stringify(parsed.skills)}`, { to: 'debug' })
+    await applyText($, box.text, parsed.text)
+  } catch (err) {
+    // Nothing above may escape into the `void` a press runs under: an unhandled
+    // rejection there is swallowed whole and the draft silently never changes.
+    const detail = err instanceof Error ? err.message : String(err)
+    $.ui.status(`enhancing failed: ${detail}`)
+    $.ui.log(`enhancing threw: ${detail}`, { to: 'debug' })
+    await update($, phase, () => ({ kind: 'failed', reason: detail }))
   }
-  $.ui.log(`prompt-enhancer: skills ${JSON.stringify(parsed.skills)}`, { to: 'debug' })
-  await applyText($, box.text, parsed.text)
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'prompt-enhance', description: 'Enhance the prompt in the box.' })
+    await $.command.register({
+      name: 'prompt-enhance',
+      description: 'Enhance the prompt in the box.',
+    })
     const home = await $.env.get('HOME')
     if (home !== undefined) {
-      await update($, skills, () => listSkillsWith(home, p => $.fs.list(p), p => $.fs.read(p)))
+      await update($, skills, () =>
+        listSkillsWith(home, p => $.fs.list(p), p => $.fs.read(p)),
+      )
     }
+    // `update`'s writer is synchronous, so the read happens before the write.
+    const claudeMd = await readProjectGuide($)
+    await update($, context, () => ({ cwd: e.cwd, claudeMd }))
     return next(e)
   })
 
   on('command.run', { command: 'prompt-enhance' }, async $ => {
-    await applyEnhancement($)
+    await enhance($)
     return { text: 'Prompt enhanced.' }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e) => {
     if (e.props.hasSurvey) return null
     const last: Applied | null = await read($, applied)
+    const now: Phase = await read($, phase)
     const { Box, Text, Button } = $.ui.resolve(e)
+
     return (
       <Box>
         <Text dimColor>Prompt Enhancer</Text>
+        {now.kind === 'working' ? (
+          <Text color="warning">rewriting…</Text>
+        ) : now.kind === 'failed' ? (
+          <Text color="error">{now.reason}</Text>
+        ) : null}
         {last === null ? (
-          <Button key="enhance" label="Enhance" onPress={() => { void applyEnhancement($) }} />
+          // `hotkey` takes one lowercase letter, and the band holds the keyboard
+          // once the person reaches it — after ctrl+x tab, or a click on the band.
+          // That is the only modifier-free way to press this without typing the
+          // letter into the composer: no engine keybinding action runs a command.
+          <Button
+            key="enhance"
+            label="Enhance"
+            plain
+            hotkey="e"
+            onPress={() => { void enhance($) }}
+          />
         ) : (
-          <Button key="revert" label="Revert" onPress={() => { void revert($) }} />
+          <Button
+            key="revert"
+            label="Revert"
+            plain
+            hotkey="r"
+            onPress={() => { void revert($) }}
+          />
         )}
       </Box>
     )
