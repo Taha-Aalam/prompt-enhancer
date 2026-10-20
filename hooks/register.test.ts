@@ -43,6 +43,15 @@ test('the Enhance button carries an e hotkey', async ($, on) => {
   expect(JSON.stringify(await draw($, on))).toContain('"hotkey":"e"')
 })
 
+// The chord is written the way a keycap is: `Ctrl+E`, not `ctrl+e` or `e`.
+test('the chord is capitalised, and the letter is not shown beside it', async ($, on) => {
+  standIns(on)
+  const band = JSON.stringify(await draw($, on))
+  expect(band).toContain('Ctrl+E  Enhance')
+  expect(band).not.toContain('ctrl+e')
+  expect(band).not.toContain('e: ')
+})
+
 // The chord that presses this from the prompt, as opposed to the band hotkey.
 // It is what makes the button reachable without ctrl+x tab, which a terminal
 // that eats a chord on a `ctrl+x` prefix would otherwise swallow.
@@ -121,7 +130,7 @@ test('a successful fill switches the band to Revert', async ($, on) => {
   await draw($, on)
   await press($, 'enhance')
   const band = JSON.stringify(await draw($, on))
-  expect(band).toContain('Ctrl+U  Revert')
+  expect(band).toContain('Ctrl+R  Revert')
   expect(band).toContain('"action":"permission:toggleDebug"')
 })
 
@@ -161,7 +170,7 @@ test('no turn to fork from falls back to a completion', async ($, on) => {
   await draw($, on)
   await press($, 'enhance')
   // The fallback answered, so the band switched to Revert rather than complaining.
-  expect(JSON.stringify(await draw($, on))).toContain('Ctrl+U  Revert')
+  expect(JSON.stringify(await draw($, on))).toContain('Ctrl+R  Revert')
 })
 
 // A completion on its own can still fail, and against a provider that answers the
