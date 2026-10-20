@@ -35,21 +35,20 @@ const ENHANCE_ACTION = 'confirm:previousField'
 const REVERT_ACTION = 'permission:toggleDebug'
 
 /**
- * The label a control is drawn with.
+ * The chord, as it is drawn beside a button: `Ctrl+E:`.
  *
- * `plain` is not used: it draws the `hotkey` prop in the accent color, a colon,
- * then the label, so the band read `e: [ Enhance ]` — which named a letter that
- * does nothing from the composer, and left the chord that does work unsaid. Left
- * unstyled, the button draws its own brackets around whatever the label says, so
- * naming the chord in the label puts it inside them: `[ Ctrl+E  Enhance ]`.
+ * The chord sits outside the button, not in its label. A button brackets
+ * whatever its label says, so a chord named in the label lands inside the
+ * brackets — `[ Ctrl+E  Enhance ]` — which reads as one control rather than a
+ * key and the thing it presses. Drawn beside it, the band reads
+ * `Ctrl+E: [ Enhance ]`: the key, a colon, then the button it presses.
  *
- * The letter is capitalised, the way a keycap is written, and the letter is not
- * also shown: `hotkey` still carries it so the band keeps working, but a label
- * that named both would read as two different keys. Only the letter is raised —
- * `Ctrl` stays `Ctrl`, since `CTRL` reads as shouting.
+ * `plain` is not used for the same reason: it draws the `hotkey` prop before
+ * the label, which put a bare `e:` there — a letter that does nothing from the
+ * composer. The letter still rides on the button as `hotkey`, so the band keeps
+ * working once it holds the keyboard; it is just not what the band advertises.
  */
-const labelled = (chord: string, name: string) =>
-  chord.slice(0, -1) + chord.slice(-1).toUpperCase() + `  ${name}`
+const chord = (key: string) => `${key}:`
 
 /** The reason a call did not come back, in words fit to show the person. */
 const why = (result: any): string => {
@@ -208,28 +207,34 @@ export const register: Register = on => {
           <Text color="error">{now.reason}</Text>
         ) : null}
         {last === null ? (
-          // Two ways in, deliberately, and the label names the one that works
-          // from anywhere. `action` is the chord: bind it in
+          // Two ways in, deliberately, and the chord named beside it is the one
+          // that works from anywhere. `action` is that chord: bind it in
           // ~/.claude/keybindings.json and it presses this from the prompt, with
           // no focus to move first, which survives a terminal that eats the
           // `ctrl+x` prefix. `hotkey` is the bare letter, and it reads only once
           // the band holds the keyboard (ctrl+x tab, or a click on it) — never
           // the composer, so typing "enhance" is still typing.
-          <Button
-            key="enhance"
-            label={labelled('Ctrl+E', 'Enhance')}
-            hotkey="e"
-            action={ENHANCE_ACTION}
-            onPress={() => { void enhance($) }}
-          />
+          <Box gap={1}>
+            <Text dimColor>{chord('Ctrl+E')}</Text>
+            <Button
+              key="enhance"
+              label="Enhance"
+              hotkey="e"
+              action={ENHANCE_ACTION}
+              onPress={() => { void enhance($) }}
+            />
+          </Box>
         ) : (
-          <Button
-            key="revert"
-            label={labelled('Ctrl+R', 'Revert')}
-            hotkey="r"
-            action={REVERT_ACTION}
-            onPress={() => { void revert($) }}
-          />
+          <Box gap={1}>
+            <Text dimColor>{chord('Ctrl+U')}</Text>
+            <Button
+              key="revert"
+              label="Revert"
+              hotkey="r"
+              action={REVERT_ACTION}
+              onPress={() => { void revert($) }}
+            />
+          </Box>
         )}
       </Box>
     )
