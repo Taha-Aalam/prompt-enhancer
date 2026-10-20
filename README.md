@@ -18,6 +18,9 @@ Answer `y` to add the marketplace, then choose the user scope.
 
 The band above your prompt carries the control: `🪄 Prompt Enhancer   Ctrl+E: [ Enhance ]`.
 
+The band is one site every mod draws into, so this one adds its row above whatever the mods
+beneath it draw — skins' usage band, another mod's progress — rather than taking the site.
+
 Click it to rewrite the rough prompt in your composer. Once a rewrite is in the box the button
 becomes `Ctrl+U: [ Revert ]`, which puts your original draft back.
 

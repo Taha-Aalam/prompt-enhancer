@@ -255,13 +255,25 @@ export const register: Register = on => {
     return { text: 'Prompt enhanced.' }
   })
 
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e) => {
-    if (e.props.hasSurvey) return null
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
     const last: Applied | null = await read($, applied)
     const now: Phase = await read($, phase)
     const { Box, Text, Button } = $.ui.resolve(e)
 
-    return (
+    // `AbovePrompt` is one site shared by every mod: answering it without `next`
+    // takes the whole site, and the mods beneath — skins' usage band, another
+    // mod's progress — never draw. This hook used to do exactly that, which is
+    // why the band below the prompt went missing whenever this mod was loaded.
+    const drawn = await next(e).catch(() => null)
+    // Claude Code's own placeholder is never nested: a surface drops a band that
+    // nests it, so the placeholder is left out and only the mods' drawings kept.
+    const below =
+      drawn !== null && typeof drawn === 'object' && (drawn as { type?: string }).type !== 'engine'
+        ? drawn
+        : null
+
+    const row = (
       // `gap` is what puts air between the label and the button; the band lays
       // these out in a row, so without it they run together as one string.
       <Box gap={2}>
@@ -301,6 +313,13 @@ export const register: Register = on => {
             />
           </Box>
         )}
+      </Box>
+    )
+
+    return below === null ? row : (
+      <Box flexDirection="column">
+        {row}
+        {below}
       </Box>
     )
   })
