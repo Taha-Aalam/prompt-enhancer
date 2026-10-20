@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Applied, Phase, Skill } from '../types'
+import type { Question } from './enhance'
 import { buildEnhancePrompt, parseEnhance } from './enhance'
 import { listSkillsWith } from './skills'
 
@@ -129,6 +130,23 @@ const revert = async ($: any) => {
   await update($, applied, () => null)
 }
 
+/** How many questions are worth asking before the rewrite is written. */
+const MAX_QUESTIONS = 2
+
+/**
+ * Asks the model for a rewrite, then for a second one that folds in whatever
+ * the person answered.
+ *
+ * The questions come back on the first pass, and they are asked *before* the
+ * rewrite is put in the prompt bar, so the answer shapes the rewrite rather
+ * than arriving after it. A draft with nothing worth asking gets one pass and
+ * no dialog, which is most of them.
+ *
+ * `$.ui.ask` is the engine's own question dialog: it takes the keyboard itself,
+ * unlike a `Select` in the band, which only reads while the band already holds
+ * focus. It rejects when dismissed and in a `-p` run where nobody can answer,
+ * so a refusal means "carry on with what we have", not "fail".
+ */
 const enhance = async ($: any) => {
   const box = await $.prompt.read()
   if (box.text.trim() === '') {
@@ -141,22 +159,36 @@ const enhance = async ($: any) => {
   try {
     const installed = await read($, skills)
     const project = await read($, context)
-    const answer = await ask($, buildEnhancePrompt(box.text, installed, project))
+    const first = await ask($, buildEnhancePrompt(box.text, installed, project))
 
-    if (typeof answer !== 'string') {
-      const reason = `${answer.why}; the draft is unchanged`
+    if (typeof first !== 'string') {
+      const reason = `${first.why}; the draft is unchanged`
       $.ui.status(reason)
       await update($, phase, () => ({ kind: 'failed', reason }))
       return
     }
-    const parsed = parseEnhance(answer)
+    const parsed = parseEnhance(first)
     if (parsed === null) {
       $.ui.status('the rewrite was not in the form asked for; the draft is unchanged')
       await update($, phase, () => ({ kind: 'failed', reason: 'the rewrite was not in the form asked for' }))
       return
     }
     $.ui.log(`skills ${JSON.stringify(parsed.skills)}`, { to: 'debug' })
-    await applyText($, box.text, parsed.text)
+
+    let text = parsed.text
+    const answers = await collect($, parsed.questions.slice(0, MAX_QUESTIONS))
+    if (answers.length > 0) {
+      $.ui.status('rewriting with your answers…')
+      const second = await ask($, buildEnhancePrompt(box.text, installed, project, answers))
+      // A failed or malformed second pass is not a failed enhance: the first
+      // rewrite is already good, and it is better to land it than to lose it.
+      if (typeof second === 'string') {
+        const again = parseEnhance(second)
+        if (again !== null) text = again.text
+      }
+    }
+
+    await applyText($, box.text, text)
   } catch (err) {
     // Nothing above may escape into the `void` a press runs under: an unhandled
     // rejection there is swallowed whole and the draft silently never changes.
@@ -165,6 +197,39 @@ const enhance = async ($: any) => {
     $.ui.log(`enhancing threw: ${detail}`, { to: 'debug' })
     await update($, phase, () => ({ kind: 'failed', reason: detail }))
   }
+}
+
+/**
+ * Puts each question to the person and keeps the answers.
+ *
+ * At most `MAX_QUESTIONS` are put, however many the model asked: a rewrite is
+ * worth two questions, not an interrogation.
+ *
+ * A dismissed dialog ends the asking rather than the enhance: whatever was
+ * answered so far still shapes the rewrite, and the rest is left as it was.
+ *
+ * Exported so a test can drive it directly. `$.ui.ask` is not an event — it
+ * runs the engine's own AskUserQuestion tool — so it cannot be stood in for
+ * with `on(...)` the way the other engine calls are; the test hands in a `$`
+ * whose `ui.ask` it owns.
+ */
+export const collect = async (
+  $: any,
+  questions: Question[],
+): Promise<{ question: string; answer: string }[]> => {
+  const answers: { question: string; answer: string }[] = []
+  for (const q of questions.slice(0, MAX_QUESTIONS)) {
+    try {
+      const answer = await $.ui.ask(q.question, q.options)
+      if (typeof answer === 'string' && answer.trim() !== '') {
+        answers.push({ question: q.question, answer: answer.trim() })
+      }
+    } catch {
+      // Dismissed, or no one to ask. Stop here; the answers so far still count.
+      break
+    }
+  }
+  return answers
 }
 
 export const register: Register = on => {

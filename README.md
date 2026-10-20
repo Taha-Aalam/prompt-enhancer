@@ -21,6 +21,11 @@ The band above your prompt carries the control: `🪄 Prompt Enhancer   Ctrl+E: 
 Click it to rewrite the rough prompt in your composer. Once a rewrite is in the box the button
 becomes `Ctrl+U: [ Revert ]`, which puts your original draft back.
 
+If the draft leaves something out that would change the answer, the model asks **at most two**
+questions before writing — a real dialog with options, using Claude Code's own question UI. Your
+answers are folded into the rewrite rather than asked after it. A draft with nothing worth asking
+gets no dialog at all, which is most of them.
+
 You can also run `/prompt-enhance` from anywhere.
 
 Either way the rewrite lands **in the composer, not in the conversation**. Read it, edit it,
@@ -66,8 +71,17 @@ Either way `esc` returns focus to the composer.
 
 It is given your draft, the skills installed on this machine, and the project you are in —
 its working directory and the project's own `CLAUDE.md` — so it can suggest the skills that
-actually fit and speak in the project's terms. It returns the rewritten prompt, the skills
-worth loading, any choices worth asking about first, and what "done" looks like.
+actually fit and speak in the project's terms.
+
+The rules make it **diagnose before it rewrites**: find what the draft leaves out — who it is
+for, what the output should be, what done looks like — and put a guess in a question rather than
+in the rewrite, because a guess written into a prompt becomes a false requirement. It matches the
+shape of the rewrite to the kind of task (code and debugging, writing and design, research and
+explanation, planning), and it names a role only where the task needs one.
+
+It returns the rewritten prompt, the skills worth loading, up to two questions with their
+options, and what "done" looks like. The questions are asked; the skills and the definition of
+done are logged to the debug log, not shown.
 
 ## How it works
 

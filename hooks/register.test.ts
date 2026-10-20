@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { register } from './register'
+import { collect, register } from './register'
 import { buildEnhancePrompt, parseEnhance } from './enhance'
 
 const draw = ($: any) =>
@@ -9,16 +9,23 @@ const press = ($: any, key: string) => $.ui.press({ plugin: 'prompt-enhancer', k
 const NL = String.fromCharCode(10)
 
 /**
+ * What the last fill put in the prompt bar. Set by the `prompt.fill` stand-in,
+ * so a test can assert what actually landed rather than only what was drawn.
+ */
+let filledWith: string | null = null
+
+/**
  * Every engine call the mod makes on the way to a rewrite, faked. A test may
  * swap any of them: each event may be registered only once, so `over` is
  * applied as the registration itself rather than as a second one.
  */
 const standIns = (on: any, over: Record<string, () => any> = {}) => {
+  filledWith = null
   const fake = (event: string, answer: () => any) =>
     on(event, over[event] ? over[event] : answer)
   fake('ui.render', () => ({ type: 'Box', children: [] }))
   fake('prompt.read', () => ({ value: { text: 'make it better', cursor: 15 } }))
-  fake('prompt.fill', () => ({ isFilled: true }))
+  fake('prompt.fill', ($: any, e: any) => { filledWith = e.text; return { isFilled: true } })
   fake('model.fork', () => ({ value: { isAnswered: true, text: '{"text":"rewritten"}' } }))
   fake('model.complete', () => ({ value: { isAnswered: true, text: '{"text":"rewritten"}' } }))
   fake('session.model', () => ({ value: 'claude-opus-5-5' }))
@@ -116,10 +123,68 @@ test('a model answer that is not JSON fails soft', () => {
 
 test('a well-formed answer parses', () => {
   const parsed = parseEnhance(JSON.stringify({
-    skills: ['dataviz'], questions: ['One dataset or many?'], result: 'A chart.', text: 'Body.',
+    skills: ['dataviz'],
+    questions: [{ question: 'One dataset or many?', options: ['One', 'Many'] }],
+    result: 'A chart.',
+    text: 'Body.',
   }))
   expect(parsed?.text).toBe('Body.')
   expect(parsed?.questions).toHaveLength(1)
+  expect(parsed?.questions[0].options).toEqual(['One', 'Many'])
+})
+
+// A dialog needs something to pick. A question with fewer than two options
+// cannot be shown as a choice, so it is dropped rather than asked empty.
+test('a question with too few options is dropped', () => {
+  const parsed = parseEnhance(JSON.stringify({
+    skills: [],
+    questions: [
+      { question: 'No options?', options: [] },
+      { question: 'One option?', options: ['Only'] },
+      { question: 'Two?', options: ['A', 'B'] },
+    ],
+    result: '',
+    text: 'Body.',
+  }))
+  expect(parsed?.questions).toHaveLength(1)
+  expect(parsed?.questions[0].question).toBe('Two?')
+})
+
+// The old shape, a bare string, no longer fits the question contract.
+test('a plain-string question is dropped', () => {
+  const parsed = parseEnhance(JSON.stringify({
+    skills: [], questions: ['One dataset or many?'], result: '', text: 'Body.',
+  }))
+  expect(parsed?.questions).toHaveLength(0)
+})
+
+test('the rewrite prompt names the project and the skills', () => {
+  const text = buildEnhancePrompt(
+    'make it better',
+    [{ name: 'dataviz', description: 'Charts' }],
+    { cwd: 'C:\\work\\app', claudeMd: 'Use tabs.' },
+  )
+  expect(text).toContain('dataviz')
+  expect(text).toContain('C:\\work\\app')
+  expect(text).toContain('Use tabs.')
+})
+
+// The Lyra borrowings: diagnose before rewriting, shape by task, guard the role.
+test('the rules diagnose, shape by task, and guard the role', () => {
+  const text = buildEnhancePrompt('make it better', [])
+  expect(text).toContain('Diagnose before rewriting')
+  expect(text).toContain('Match the shape to the task')
+  expect(text).toContain('code or debugging')
+  expect(text).toContain('Name a role only where it sharpens')
+})
+
+test('answers from a first pass are written into the second', () => {
+  const text = buildEnhancePrompt('make it better', [], { cwd: '', claudeMd: '' }, [
+    { question: 'Password login, SSO, or both?', answer: 'Both' },
+  ])
+  expect(text).toContain('Decisions so far')
+  expect(text).toContain('Password login, SSO, or both? → Both')
+  expect(text).toContain('do not ask them again')
 })
 
 test('a refused fill is reported, not thrown', async ($, on) => {
@@ -165,6 +230,97 @@ test('a call that came back unanswered names the reason', async ($, on) => {
   await draw($, on)
   await press($, 'enhance')
   expect(JSON.stringify(await draw($, on))).toContain('429')
+})
+
+// The first pass asks; the answer comes back in a second pass that lands.
+test('an answered question shapes a second rewrite', async ($, on) => {
+  const asked: { question: string; options: readonly string[] }[] = []
+  const prompts: string[] = []
+  const asked$ = {
+    ui: {
+      ask: async (question: string, options: readonly string[]) => {
+        asked.push({ question, options })
+        return 'Both'
+      },
+    },
+  }
+  standIns(on, {
+    'model.fork': ($: any, e: any) => {
+      prompts.push(e.prompt)
+      const questions = prompts.length === 1
+        ? [{ question: 'Password login, SSO, or both?', options: ['Password', 'SSO', 'Both'] }]
+        : []
+      const text = prompts.length === 1 ? 'first' : 'second'
+      return { value: { isAnswered: true, text: JSON.stringify({ skills: [], questions, result: '', text }) } }
+    },
+  })
+
+  // What the dialog is asked, and what comes back.
+  const answers = await collect(asked$, [{ question: 'Password login, SSO, or both?', options: ['Password', 'SSO', 'Both'] }])
+  expect(asked).toHaveLength(1)
+  expect(asked[0].options).toEqual(['Password', 'SSO', 'Both'])
+  expect(answers).toEqual([{ question: 'Password login, SSO, or both?', answer: 'Both' }])
+
+  // And that answer, folded into the instruction, changes the rewrite.
+  const second = buildEnhancePrompt('make it better', [], { cwd: '', claudeMd: '' }, answers)
+  expect(second).toContain('Password login, SSO, or both? → Both')
+})
+
+test('no questions means no dialog', async ($, on) => {
+  let askedCount = 0
+  const asked$ = { ui: { ask: async () => { askedCount += 1; return 'x' } } }
+  expect(await collect(asked$, [])).toEqual([])
+  expect(askedCount).toBe(0)
+})
+
+// At most two questions are put, however many the model asks.
+test('only two questions are asked', async () => {
+  let askedCount = 0
+  const asked$ = { ui: { ask: async () => { askedCount += 1; return 'A' } } }
+  const answers = await collect(asked$, [
+    { question: 'Q1?', options: ['A', 'B'] },
+    { question: 'Q2?', options: ['A', 'B'] },
+    { question: 'Q3?', options: ['A', 'B'] },
+  ])
+  expect(askedCount).toBe(2)
+  expect(answers).toHaveLength(2)
+})
+
+// A dismissed dialog ends the asking, keeping what was already answered.
+test('a dismissed dialog keeps the answers so far', async () => {
+  let n = 0
+  const asked$ = {
+    ui: {
+      ask: async () => {
+        n += 1
+        if (n === 2) throw new Error('dismissed')
+        return 'A'
+      },
+    },
+  }
+  const answers = await collect(asked$, [
+    { question: 'Q1?', options: ['A', 'B'] },
+    { question: 'Q2?', options: ['A', 'B'] },
+  ])
+  expect(answers).toHaveLength(1)
+  expect(answers[0].answer).toBe('A')
+})
+
+// Dismissing the dialog must not lose the rewrite. The first pass already
+// produced one, so it is what lands.
+test('a dismissed dialog still lands the first rewrite', async ($, on) => {
+  standIns(on, {
+    'model.fork': () => ({ value: { isAnswered: true, text: JSON.stringify({
+      skills: [],
+      questions: [{ question: 'Q?', options: ['A', 'B'] }],
+      result: '',
+      text: 'first rewrite',
+    }) } }),
+  })
+  await draw($, on)
+  await press($, 'enhance')
+  expect(filledWith).toBe('first rewrite')
+  expect(JSON.stringify(await draw($, on))).toContain('"label":"Revert"')
 })
 
 // The first press in every new session: a fork has no turn to fork from, and
