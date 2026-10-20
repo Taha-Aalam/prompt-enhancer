@@ -80,6 +80,29 @@ test('the band leads with its mark and keeps air around the button', async ($, o
   expect(band).toContain('"gap":2')
 })
 
+// `AbovePrompt` is one site shared by every mod. The hook used to answer it without
+// `next`, which took the whole site: skins' usage band and any other mod's band
+// beneath it never drew. What is drawn beneath is kept and laid under our row.
+test('the band keeps what the mods beneath it drew', async ($, on) => {
+  standIns(on, {
+    'ui.render': () => ({ type: 'Box', children: ['SOMETHING BENEATH'] }),
+  })
+  const band = JSON.stringify(await draw($, on))
+  expect(band).toContain('🪄 Prompt Enhancer')
+  expect(band).toContain('SOMETHING BENEATH')
+})
+
+// Claude Code's own placeholder is never nested: a surface drops a band that nests
+// it, so it is left out and only the mods' drawings are kept.
+test('the engine placeholder is not nested', async ($, on) => {
+  standIns(on, {
+    'ui.render': () => ({ type: 'engine' }),
+  })
+  const band = JSON.stringify(await draw($, on))
+  expect(band).toContain('🪄 Prompt Enhancer')
+  expect(band).not.toContain('"type":"engine"')
+})
+
 const FILES: Record<string, string> = {
   dataviz: '---' + NL + 'name: dataviz' + NL + 'description: Charts.' + NL + '---' + NL,
   broken: 'no frontmatter at all',

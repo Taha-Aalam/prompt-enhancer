@@ -1,6 +1,6 @@
 {
   "name": "prompt-enhancer",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Rewrites a rough prompt into a structured one.",
   "author": { "name": "Taha-Aalam" },
   "types": "./types/index.d.ts"
