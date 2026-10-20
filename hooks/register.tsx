@@ -41,10 +41,15 @@ const REVERT_ACTION = 'permission:toggleDebug'
  * then the label, so the band read `e: [ Enhance ]` — which named a letter that
  * does nothing from the composer, and left the chord that does work unsaid. Left
  * unstyled, the button draws its own brackets around whatever the label says, so
- * naming the chord in the label puts it inside them: `[ Ctrl+E Enhance ]`. The
- * bare letter still works as a `hotkey`, it is just not what the label advertises.
+ * naming the chord in the label puts it inside them: `[ Ctrl+E  Enhance ]`.
+ *
+ * The letter is capitalised, the way a keycap is written, and the letter is not
+ * also shown: `hotkey` still carries it so the band keeps working, but a label
+ * that named both would read as two different keys. Only the letter is raised —
+ * `Ctrl` stays `Ctrl`, since `CTRL` reads as shouting.
  */
-const labelled = (chord: string, name: string) => `${chord}  ${name}`
+const labelled = (chord: string, name: string) =>
+  chord.slice(0, -1) + chord.slice(-1).toUpperCase() + `  ${name}`
 
 /** The reason a call did not come back, in words fit to show the person. */
 const why = (result: any): string => {
@@ -220,7 +225,7 @@ export const register: Register = on => {
         ) : (
           <Button
             key="revert"
-            label={labelled('Ctrl+U', 'Revert')}
+            label={labelled('Ctrl+R', 'Revert')}
             hotkey="r"
             action={REVERT_ACTION}
             onPress={() => { void revert($) }}
