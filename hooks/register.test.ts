@@ -28,14 +28,19 @@ const standIns = (on: any, over: Record<string, () => any> = {}) => {
 
 test('the band offers Enhance', async ($, on) => {
   standIns(on)
-  expect(JSON.stringify(await draw($, on))).toContain('Ctrl+E  Enhance')
+  expect(JSON.stringify(await draw($, on))).toContain('"label":"Enhance"')
 })
 
 // The chord is what works from the composer. The band drew `e:` here instead,
 // which named a letter that does nothing unless the band holds the keyboard.
-test('the label names the chord, not the letter', async ($, on) => {
+test('the chord sits outside the button, not inside its label', async ($, on) => {
   standIns(on)
-  expect(JSON.stringify(await draw($, on))).not.toContain('Enhance ]')
+  const band = JSON.stringify(await draw($, on))
+  // The chord is its own Text, drawn before the button.
+  expect(band).toContain('"children":["Ctrl+E:"]')
+  // The button brackets its own label, so the chord must not be in that label.
+  expect(band).toContain('"label":"Enhance"')
+  expect(band).not.toContain('"label":"Ctrl+E')
 })
 
 test('the Enhance button carries an e hotkey', async ($, on) => {
@@ -43,13 +48,13 @@ test('the Enhance button carries an e hotkey', async ($, on) => {
   expect(JSON.stringify(await draw($, on))).toContain('"hotkey":"e"')
 })
 
-// The chord is written the way a keycap is: `Ctrl+E`, not `ctrl+e` or `e`.
-test('the chord is capitalised, and the letter is not shown beside it', async ($, on) => {
+// The chord is written the way a keycap is: `Ctrl+E:`, not `ctrl+e` or `e:`.
+test('the chord is capitalised, and the bare letter is not advertised', async ($, on) => {
   standIns(on)
   const band = JSON.stringify(await draw($, on))
-  expect(band).toContain('Ctrl+E  Enhance')
+  expect(band).toContain('Ctrl+E:')
   expect(band).not.toContain('ctrl+e')
-  expect(band).not.toContain('e: ')
+  expect(band).not.toContain('e: [')
 })
 
 // The chord that presses this from the prompt, as opposed to the band hotkey.
@@ -122,7 +127,7 @@ test('a refused fill is reported, not thrown', async ($, on) => {
   await draw($, on)
   await press($, 'enhance')
   // The band still offers Enhance, because nothing was applied.
-  expect(JSON.stringify(await draw($, on))).toContain('Ctrl+E  Enhance')
+  expect(JSON.stringify(await draw($, on))).toContain('"label":"Enhance"')
 })
 
 test('a successful fill switches the band to Revert', async ($, on) => {
@@ -130,7 +135,7 @@ test('a successful fill switches the band to Revert', async ($, on) => {
   await draw($, on)
   await press($, 'enhance')
   const band = JSON.stringify(await draw($, on))
-  expect(band).toContain('Ctrl+R  Revert')
+  expect(band).toContain('"label":"Revert"')
   expect(band).toContain('"action":"permission:toggleDebug"')
 })
 
@@ -150,7 +155,7 @@ test('a failing model call is shown, and the draft is left alone', async ($, on)
   // Whatever the engine reports, it is put in front of the person rather than
   // swallowed, and nothing was rewritten, so Enhance is still what is offered.
   expect(band).toContain('"color":"error"')
-  expect(band).toContain('Ctrl+E  Enhance')
+  expect(band).toContain('"label":"Enhance"')
 })
 
 test('a call that came back unanswered names the reason', async ($, on) => {
@@ -170,7 +175,7 @@ test('no turn to fork from falls back to a completion', async ($, on) => {
   await draw($, on)
   await press($, 'enhance')
   // The fallback answered, so the band switched to Revert rather than complaining.
-  expect(JSON.stringify(await draw($, on))).toContain('Ctrl+R  Revert')
+  expect(JSON.stringify(await draw($, on))).toContain('"label":"Revert"')
 })
 
 // A completion on its own can still fail, and against a provider that answers the
@@ -201,5 +206,5 @@ test('a completion that fails reaches the band', async ($, on) => {
   // The harness answers a failing stand-in with its own message, so what is
   // asserted is the shape: the failure is in the band, and the draft is intact.
   expect(band).toContain('"color":"error"')
-  expect(band).toContain('Ctrl+E  Enhance')
+  expect(band).toContain('"label":"Enhance"')
 })

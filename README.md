@@ -16,10 +16,10 @@ Answer `y` to add the marketplace, then choose the user scope.
 
 ## Use
 
-The band above your prompt carries the control: `🪄 Prompt Enhancer   [ Ctrl+E  Enhance ]`.
+The band above your prompt carries the control: `🪄 Prompt Enhancer   Ctrl+E: [ Enhance ]`.
 
 Click it to rewrite the rough prompt in your composer. Once a rewrite is in the box the button
-becomes `[ Ctrl+R  Revert ]`, which puts your original draft back.
+becomes `Ctrl+U: [ Revert ]`, which puts your original draft back.
 
 You can also run `/prompt-enhance` from anywhere.
 
@@ -28,7 +28,7 @@ and send it yourself — nothing is submitted without you.
 
 ## Keyboard
 
-**`Ctrl+E`** rewrites and **`Ctrl+R`** reverts, from the composer, with no focus to move first.
+**`Ctrl+E`** rewrites and **`Ctrl+U`** reverts, from the composer, with no focus to move first.
 Both are single keystrokes, so they work the same in every terminal and multiplexer.
 
 To turn them on, put this in `~/.claude/keybindings.json` (create it by running `/keybindings`):
@@ -42,13 +42,7 @@ To turn them on, put this in `~/.claude/keybindings.json` (create it by running 
       "context": "Global",
       "bindings": {
         "ctrl+e": "confirm:previousField",
-        "ctrl+r": "permission:toggleDebug"
-      }
-    },
-    {
-      "context": "Chat",
-      "bindings": {
-        "ctrl+r": null
+        "ctrl+u": "permission:toggleDebug"
       }
     }
   ]
@@ -58,10 +52,8 @@ To turn them on, put this in `~/.claude/keybindings.json` (create it by running 
 Changes apply immediately — no restart. The two action names look odd, and that is the point:
 they are the ones Claude Code documents as actions it *does not respond to*, so they are free for
 a button to borrow and no built-in feature can take the chord away later. Keep the `Global` block
-as it is written — that is the only context where these chords fire. The `Chat` block is just as
-load-bearing: `Ctrl+R` is history search by default, and a default binding in an active context
-wins, so it has to be unbound before Revert can have it. Change the keys freely; only the two
-actions must stay.
+as it is written — that is the only context where these chords fire. Change the keys freely;
+only the two actions must stay.
 
 **`e`** and **`r`** also work, but only once the band holds the keyboard — press `ctrl+x` `tab`
 (within 3 seconds of each other), or click the band, then press the letter. That route is why
@@ -105,9 +97,8 @@ never the first thing tried.
 - A chord only fires while no dialog is up and nothing else has claimed the action. If
   `ctrl+e` stops working, check that no other plugin has bound it too, and that the binding is
   in a `Global` block — a `Confirmation` action bound elsewhere never fires.
-- Revert uses `Ctrl+R`, which is history search by default. The `Chat` block in the keybindings
-  file unbinds it there, so you give up `Ctrl+R` history search while this is installed. If you
-  want it back, change Revert to another key and drop that block.
+- Revert uses `Ctrl+U` rather than `Ctrl+R` because `Ctrl+R` is history search in every context
+  by default; taking it would cost you that. `Ctrl+U` is unbound, so it costs nothing.
 - A failed rewrite leaves your draft exactly as it was and says why, in the band.
 
 ## Development
