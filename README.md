@@ -16,10 +16,10 @@ Answer `y` to add the marketplace, then choose the user scope.
 
 ## Use
 
-The band above your prompt carries the control: `🪄 Prompt Enhancer   e: [ Enhance ]`.
+The band above your prompt carries the control: `🪄 Prompt Enhancer   [ Ctrl+E  Enhance ]`.
 
 Click it to rewrite the rough prompt in your composer. Once a rewrite is in the box the button
-becomes `r: [ Revert ]`, which puts your original draft back.
+becomes `[ Ctrl+U  Revert ]`, which puts your original draft back.
 
 You can also run `/prompt-enhance` from anywhere.
 
@@ -28,20 +28,21 @@ and send it yourself — nothing is submitted without you.
 
 ## Keyboard
 
-Two ways to press it, and the second is the one to set up.
+**`Ctrl+E`** rewrites and **`Ctrl+U`** reverts, from the composer, with no focus to move first.
+Both are single keystrokes, so they work the same in every terminal and multiplexer.
 
-**`ctrl+e`** rewrites, **`ctrl+r`** reverts, from the composer, with no focus to move first.
-To turn them on, add this to `~/.claude/keybindings.json` (create it with `/keybindings`):
+To turn them on, put this in `~/.claude/keybindings.json` (create it by running `/keybindings`):
 
 ```json
 {
   "$schema": "https://www.schemastore.org/claude-code-keybindings.json",
+  "$docs": "https://code.claude.com/docs/en/keybindings",
   "bindings": [
     {
       "context": "Global",
       "bindings": {
         "ctrl+e": "confirm:previousField",
-        "ctrl+r": "permission:toggleDebug"
+        "ctrl+u": "permission:toggleDebug"
       }
     }
   ]
@@ -50,13 +51,14 @@ To turn them on, add this to `~/.claude/keybindings.json` (create it with `/keyb
 
 Changes apply immediately — no restart. The two action names look odd, and that is the point:
 they are the ones Claude Code documents as actions it *does not respond to*, so they are free for
-a button to borrow and no built-in feature can take the chord away later. Swap them for any other
-key you like; only the two actions must stay.
+a button to borrow and no built-in feature can take the chord away later. Keep the `Global` block
+as it is written — that is the only context where these chords fire. Change the keys freely;
+only the two actions must stay.
 
 **`e`** and **`r`** also work, but only once the band holds the keyboard — press `ctrl+x` `tab`
-(within 3 seconds of each other), or click the band, then press the letter. If your terminal or
-multiplexer eats the `ctrl+x` chord, use the `ctrl+e` route above, which is a single keystroke
-and does not depend on a chord.
+(within 3 seconds of each other), or click the band, then press the letter. That route is why
+`Ctrl+E` is what the button advertises: a terminal that eats the `ctrl+x` prefix also eats
+`e`, but it has no reason to eat `Ctrl+E`.
 
 Either way `esc` returns focus to the composer.
 
@@ -77,22 +79,26 @@ one that returns `next(e)` lets the engine carry on.
 Anything the mod keeps between events lives in `$.state`, and every key it uses is declared in
 `types/index.d.ts` so `claude plugin validate` can check them.
 
-The model call is `$.model.fork`, not `$.model.complete`. Against a provider whose
-non-streaming `/v1/messages` reply is not Anthropic-shaped, `complete` throws inside the engine
-and, under a button press, took the whole attempt silently. `fork` goes out over the streaming
-path, where such providers are correct, and resolves to a result the mod can report. The cost
-is that a fork needs one turn in the session: on a brand-new session the first Enhance says so
-rather than failing quietly.
+The model call is `$.model.fork` first, and `$.model.complete` behind it. A fork goes out over
+the engine's streaming path, where providers are correct, and costs nothing to spell — but it
+needs one turn in the session to fork from, which a brand-new session, one just after a
+`/clear`, and a fresh resume have not got. A completion asks a model outright and needs no
+history, so that is where those go. The order matters: against a provider whose non-streaming
+`/v1/messages` reply is not Anthropic-shaped, `complete` throws inside the engine, so it is
+never the first thing tried.
 
 ## Limits worth knowing
 
 - It reads `~/.claude/skills` off disk to name installed skills, because no API lists them.
 - `e` and `r` are read by the band, not the composer, so on their own they need the band's
   focus (ctrl+x tab, or a click on it). They are deliberately not bound globally — that would
-  take those letters away from everything you type. The `ctrl+e` / `ctrl+r` bindings above are
+  take those letters away from everything you type. The `ctrl+e` / `ctrl+u` bindings above are
   the chord route, and they leave typing alone.
 - A chord only fires while no dialog is up and nothing else has claimed the action. If
-  `ctrl+e` stops working, check that no other plugin has bound it too.
+  `ctrl+e` stops working, check that no other plugin has bound it too, and that the binding is
+  in a `Global` block — a `Confirmation` action bound elsewhere never fires.
+- `Ctrl+U` rather than `Ctrl+R` for Revert, because `Ctrl+R` is history search in every
+  context and rebinding it costs you that.
 - A failed rewrite leaves your draft exactly as it was and says why, in the band.
 
 ## Development

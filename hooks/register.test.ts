@@ -20,13 +20,22 @@ const standIns = (on: any, over: Record<string, () => any> = {}) => {
   fake('prompt.read', () => ({ value: { text: 'make it better', cursor: 15 } }))
   fake('prompt.fill', () => ({ isFilled: true }))
   fake('model.fork', () => ({ value: { isAnswered: true, text: '{"text":"rewritten"}' } }))
+  fake('model.complete', () => ({ value: { isAnswered: true, text: '{"text":"rewritten"}' } }))
+  fake('session.model', () => ({ value: 'claude-opus-5-5' }))
   fake('ui.status', () => ({ value: undefined }))
   fake('ui.log', () => ({ value: undefined }))
 }
 
 test('the band offers Enhance', async ($, on) => {
   standIns(on)
-  expect(JSON.stringify(await draw($, on))).toContain('[ Enhance ]')
+  expect(JSON.stringify(await draw($, on))).toContain('Ctrl+E  Enhance')
+})
+
+// The chord is what works from the composer. The band drew `e:` here instead,
+// which named a letter that does nothing unless the band holds the keyboard.
+test('the label names the chord, not the letter', async ($, on) => {
+  standIns(on)
+  expect(JSON.stringify(await draw($, on))).not.toContain('Enhance ]')
 })
 
 test('the Enhance button carries an e hotkey', async ($, on) => {
@@ -103,8 +112,8 @@ test('a refused fill is reported, not thrown', async ($, on) => {
   standIns(on, { 'prompt.fill': () => ({ isFilled: false, refusal: 'dialog' }) })
   await draw($, on)
   await press($, 'enhance')
-  // The band still offers Revert, because nothing was applied.
-  expect(JSON.stringify(await draw($, on))).toContain('[ Enhance ]')
+  // The band still offers Enhance, because nothing was applied.
+  expect(JSON.stringify(await draw($, on))).toContain('Ctrl+E  Enhance')
 })
 
 test('a successful fill switches the band to Revert', async ($, on) => {
@@ -112,7 +121,7 @@ test('a successful fill switches the band to Revert', async ($, on) => {
   await draw($, on)
   await press($, 'enhance')
   const band = JSON.stringify(await draw($, on))
-  expect(band).toContain('[ Revert ]')
+  expect(band).toContain('Ctrl+U  Revert')
   expect(band).toContain('"action":"permission:toggleDebug"')
 })
 
@@ -132,7 +141,7 @@ test('a failing model call is shown, and the draft is left alone', async ($, on)
   // Whatever the engine reports, it is put in front of the person rather than
   // swallowed, and nothing was rewritten, so Enhance is still what is offered.
   expect(band).toContain('"color":"error"')
-  expect(band).toContain('[ Enhance ]')
+  expect(band).toContain('Ctrl+E  Enhance')
 })
 
 test('a call that came back unanswered names the reason', async ($, on) => {
@@ -144,9 +153,44 @@ test('a call that came back unanswered names the reason', async ($, on) => {
   expect(JSON.stringify(await draw($, on))).toContain('429')
 })
 
-test('no turn to fork from is named, not swallowed', async ($, on) => {
+// The first press in every new session: a fork has no turn to fork from, and
+// the person used to be told to send a message first, which is no advice at all
+// when all they wanted was to rewrite the draft they were about to send.
+test('no turn to fork from falls back to a completion', async ($, on) => {
   standIns(on, { 'model.fork': () => ({ value: { isAnswered: false, reason: 'nothing-to-fork' } }) })
   await draw($, on)
   await press($, 'enhance')
-  expect(JSON.stringify(await draw($, on))).toContain('send a message first')
+  // The fallback answered, so the band switched to Revert rather than complaining.
+  expect(JSON.stringify(await draw($, on))).toContain('Ctrl+U  Revert')
+})
+
+// A completion on its own can still fail, and against a provider that answers the
+// non-streaming path in the wrong shape it throws. Neither may be swallowed.
+test('a completion that fails is named', async ($, on) => {
+  standIns(on, {
+    'model.fork': () => ({ value: { isAnswered: false, reason: 'nothing-to-fork' } }),
+    'model.complete': () => ({ value: { isAnswered: false, reason: 'api-error', status: 503 } }),
+  })
+  await draw($, on)
+  await press($, 'enhance')
+  expect(JSON.stringify(await draw($, on))).toContain('503')
+})
+
+test('a completion that fails reaches the band', async ($, on) => {
+  standIns(on, {
+    'model.fork': () => ({ value: { isAnswered: false, reason: 'nothing-to-fork' } }),
+    // The engine rejects a call it cannot make, against a provider whose
+    // non-streaming reply is the wrong shape. It has to arrive somewhere the
+    // person can see it, not vanish into the `void` a press runs under.
+    'model.complete': () => {
+      throw new Error("undefined is not an object (evaluating 'e.flatMap')")
+    },
+  })
+  await draw($, on)
+  await press($, 'enhance')
+  const band = JSON.stringify(await draw($, on))
+  // The harness answers a failing stand-in with its own message, so what is
+  // asserted is the shape: the failure is in the band, and the draft is intact.
+  expect(band).toContain('"color":"error"')
+  expect(band).toContain('Ctrl+E  Enhance')
 })
