@@ -22,7 +22,14 @@ const MAX_CLAUDE_MD = 4_000
  * the ones the keybinding reference documents as ones "Claude Code doesn't
  * respond to", so no built-in feature can take the chord out from under them.
  * Neither is bound by default; binding them in `~/.claude/keybindings.json` is
- * what puts `ctrl+e` and `ctrl+r` on these buttons (the README has the file).
+ * what puts a chord on these buttons (the README has the file).
+ *
+ * Which context the binding goes in matters as much as the key. Both of these
+ * live in the `Confirmation` context, and a `Confirmation` action bound under
+ * `Global` does not fire: the chord is only ever looked up while a permission
+ * dialog is up. They are listed as actions the keybindings file may name, which
+ * is what makes them free to borrow — the file accepts them in any block, so one
+ * more reason to put the `Global` entry in the file this mod's README points at.
  */
 const ENHANCE_ACTION = 'confirm:previousField'
 const REVERT_ACTION = 'permission:toggleDebug'
@@ -30,12 +37,14 @@ const REVERT_ACTION = 'permission:toggleDebug'
 /**
  * The label a control is drawn with.
  *
- * `plain` already draws the hotkey in the accent color, a colon, then this, so
- * the band reads `e: [ Enhance ]` and the letter stays visible. But `plain` wins
- * over `variant`, so the surface draws no chrome box beside it and `borderStyle`
- * cannot add one — hence the brackets, which draw the same on every surface.
+ * `plain` is not used: it draws the `hotkey` prop in the accent color, a colon,
+ * then the label, so the band read `e: [ Enhance ]` — which named a letter that
+ * does nothing from the composer, and left the chord that does work unsaid. Left
+ * unstyled, the button draws its own brackets around whatever the label says, so
+ * naming the chord in the label puts it inside them: `[ Ctrl+E Enhance ]`. The
+ * bare letter still works as a `hotkey`, it is just not what the label advertises.
  */
-const boxed = (label: string) => `[ ${label} ]`
+const labelled = (chord: string, name: string) => `${chord}  ${name}`
 
 /** The reason a call did not come back, in words fit to show the person. */
 const why = (result: any): string => {
@@ -52,23 +61,30 @@ const why = (result: any): string => {
 /**
  * The one model call the mod makes.
  *
- * `$.model.complete` is the natural spelling, and it is what this used: on a
- * machine whose provider answers a non-streaming `/v1/messages` with an
- * OpenAI-shaped body (`choices[0].message.content` as a string, no `content`
- * array), the engine's own `.flatMap` over that reply throws
- * (`undefined is not an object (evaluating 'e.flatMap')`) and takes the click's
- * `void` promise down with it, so nothing was ever reported and the draft never
- * changed. `$.model.fork` asks the same model over the engine's streaming path,
- * where that provider is correct, and resolves to a result instead of throwing.
+ * A fork is the first choice: it goes out over the engine's streaming path, where
+ * providers are correct, it costs nothing to spell (it takes only `{ prompt }`
+ * and uses whatever model the session is already on), and it adds no rows to the
+ * transcript. Its one requirement is a turn to fork from — a fresh session, one
+ * right after a `/clear`, or a resume that starts the conversation afresh has
+ * none, and it answers `nothing-to-fork` rather than making a request.
  *
- * It takes only `{ prompt }` — no model, timeout or signal — and appends the
- * instruction to the conversation as the main thread last sent it. That last
- * part is checked: the fork adds no rows to the transcript, and it needs one
- * turn in the session before it can answer (`nothing-to-fork`).
+ * That is the first press in every new session, so a refusal there falls back to
+ * a completion: `$.model.complete` asks a model outright and needs no history.
+ * The fallback names a model (the session's own, via `$.session.model()`) and
+ * reads the reply whole, over the non-streaming path — the one shape some
+ * providers get wrong, which is why it is second and not first.
  */
 const ask = async ($: any, instruction: string): Promise<string | { why: string }> => {
-  const result: any = await $.model.fork({ prompt: instruction })
-  return result.isAnswered === true ? result.text : { why: why(result) }
+  const forked: any = await $.model.fork({ prompt: instruction })
+  if (forked.isAnswered === true) return forked.text
+  if (forked.reason !== 'nothing-to-fork') return { why: why(forked) }
+
+  const done: any = await $.model.complete({
+    model: await $.session.model(),
+    prompt: instruction,
+    maxTokens: 8_000,
+  })
+  return done.isAnswered === true ? done.text : { why: why(done) }
 }
 
 /**
@@ -187,16 +203,16 @@ export const register: Register = on => {
           <Text color="error">{now.reason}</Text>
         ) : null}
         {last === null ? (
-          // Two ways in, deliberately. `hotkey` is the bare letter, and it reads
-          // once the band holds the keyboard (ctrl+x tab, or a click on it) —
-          // never the composer, so typing "enhance" is still typing.
-          // `action` is the escape from that: bind `ctrl+e` to the action in
-          // ~/.claude/keybindings.json and the chord presses this from the
-          // prompt, which survives a terminal that eats the chord above.
+          // Two ways in, deliberately, and the label names the one that works
+          // from anywhere. `action` is the chord: bind it in
+          // ~/.claude/keybindings.json and it presses this from the prompt, with
+          // no focus to move first, which survives a terminal that eats the
+          // `ctrl+x` prefix. `hotkey` is the bare letter, and it reads only once
+          // the band holds the keyboard (ctrl+x tab, or a click on it) — never
+          // the composer, so typing "enhance" is still typing.
           <Button
             key="enhance"
-            label={boxed('Enhance')}
-            plain
+            label={labelled('Ctrl+E', 'Enhance')}
             hotkey="e"
             action={ENHANCE_ACTION}
             onPress={() => { void enhance($) }}
@@ -204,8 +220,7 @@ export const register: Register = on => {
         ) : (
           <Button
             key="revert"
-            label={boxed('Revert')}
-            plain
+            label={labelled('Ctrl+U', 'Revert')}
             hotkey="r"
             action={REVERT_ACTION}
             onPress={() => { void revert($) }}
