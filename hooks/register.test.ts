@@ -14,6 +14,15 @@ const NL = String.fromCharCode(10)
  */
 let filledWith: string | null = null
 
+/** Every text a fill put in the box, in order. */
+let fills: string[] = []
+
+/** Every prompt `Send` submitted, in order. */
+let submitted: { text: string; asUser: boolean }[] = []
+
+/** What the box holds; a test types by changing it, as the engine would. */
+let boxText = 'make it better'
+
 /**
  * Every engine call the mod makes on the way to a rewrite, faked. A test may
  * swap any of them: each event may be registered only once, so `over` is
@@ -21,11 +30,31 @@ let filledWith: string | null = null
  */
 const standIns = (on: any, over: Record<string, () => any> = {}) => {
   filledWith = null
+  fills = []
+  submitted = []
+  boxText = 'make it better'
   const fake = (event: string, answer: () => any) =>
     on(event, over[event] ? over[event] : answer)
   fake('ui.render', () => ({ type: 'Box', children: [] }))
-  fake('prompt.read', () => ({ value: { text: 'make it better', cursor: 15 } }))
-  fake('prompt.fill', ($: any, e: any) => { filledWith = e.text; return { isFilled: true } })
+  fake('prompt.read', () => ({ value: { text: boxText, cursor: boxText.length } }))
+  fake('prompt.fill', ($: any, e: any) => {
+    filledWith = e.text
+    fills.push(e.text)
+    // The engine's own fill lands in the box, so a later read sees it.
+    if (e.mode === 'replace' || e.mode === undefined) boxText = e.text
+    return { isFilled: true }
+  })
+  // `asUser` is not on the hook's input: it rides on the origin the engine
+  // stamps for a plugin's submission.
+  fake('prompt.submit', ($: any, e: any) => {
+    submitted.push({ text: e.text, asUser: e.origin?.asUser === true })
+    return { text: e.text }
+  })
+  fake('prompt.edit', ($: any, e: any) => {
+    boxText = e.text.slice(0, e.start) + e.inputText + e.text.slice(e.end)
+    return { text: boxText, cursor: e.start + e.inputText.length }
+  })
+  fake('prompt.change', ($: any, e: any) => { boxText = e.text; return { text: e.text } })
   fake('model.fork', () => ({ value: { isAnswered: true, text: '{"text":"rewritten"}' } }))
   fake('model.complete', () => ({ value: { isAnswered: true, text: '{"text":"rewritten"}' } }))
   fake('session.model', () => ({ value: 'claude-opus-5-5' }))
@@ -33,10 +62,200 @@ const standIns = (on: any, over: Record<string, () => any> = {}) => {
   fake('ui.log', () => ({ value: undefined }))
 }
 
+/** Types `text` into the box as a key does, through the `prompt.edit` chain. */
+const typeInto = ($: any, text: string, before = boxText) =>
+  $.prompt.edit({
+    origin: { kind: 'composer' },
+    text: before,
+    cursor: before.length,
+    start: before.length,
+    end: before.length,
+    inputText: text,
+  })
+
+/** Takes the whole draft back out, as Backspace at the end of it would. */
+const emptyBox = ($: any, before = boxText) =>
+  $.prompt.edit({
+    origin: { kind: 'composer' },
+    text: before,
+    cursor: 0,
+    start: 0,
+    end: before.length,
+    inputText: '',
+  })
+
+
 test('the band offers Enhance', async ($, on) => {
   standIns(on)
   expect(JSON.stringify(await draw($, on))).toContain('"label":"Enhance"')
 })
+
+// The row is there for a draft. With the box empty there is nothing to enhance
+// and nothing to send, and a band that sat there through every turn was one more
+// line of chrome above a prompt it had no business describing.
+test('nothing is drawn while the box is empty', async ($, on) => {
+  standIns(on, { 'prompt.read': () => ({ value: { text: '', cursor: 0 } }) })
+  const band = JSON.stringify(await draw($, on))
+  expect(band).not.toContain('Prompt Enhancer')
+  expect(band).not.toContain('"label":"Enhance"')
+})
+
+// Whitespace is not a draft: a box holding a space is one the person has not
+// written anything in yet.
+test('whitespace alone is not a draft', async ($, on) => {
+  standIns(on, { 'prompt.read': () => ({ value: { text: '   \n ', cursor: 5 } }) })
+  expect(JSON.stringify(await draw($, on))).not.toContain('Prompt Enhancer')
+})
+
+// The mods beneath still draw when this one has nothing of its own to add.
+test('the empty box leaves the mods beneath their band', async ($, on) => {
+  standIns(on, {
+    'prompt.read': () => ({ value: { text: '', cursor: 0 } }),
+    'ui.render': () => ({ type: 'Box', children: ['SOMETHING BENEATH'] }),
+  })
+  const band = JSON.stringify(await draw($, on))
+  expect(band).toContain('SOMETHING BENEATH')
+  expect(band).not.toContain('Prompt Enhancer')
+})
+
+// The band's props do not change as the person types, so the row has to be
+// told when the box starts holding a draft. That is a state write, and the band
+// subscribes to it by reading it while it draws.
+test('the first typed character tells the row the box has a draft', async ($, on) => {
+  standIns(on)
+  const writes: string[] = []
+  on('state.set', async ($: any, e: any, next: any) => { writes.push(`${e.key}=${JSON.stringify(e.value)}`); return next(e) })
+  boxText = ''
+
+  await typeInto($, 'm')
+  await typeInto($, 'a')
+  await typeInto($, 'k')
+  expect(writes).toEqual(['draft=true'])
+})
+
+// And once more when the box is emptied, so the row leaves with the draft.
+test('emptying the box tells the row the draft is gone', async ($, on) => {
+  standIns(on)
+  const writes: string[] = []
+  on('state.set', async ($: any, e: any, next: any) => { writes.push(`${e.key}=${JSON.stringify(e.value)}`); return next(e) })
+  boxText = ''
+
+  await typeInto($, 'hi')
+  await emptyBox($, 'hi')
+  expect(writes).toEqual(['draft=true', 'draft=false'])
+})
+
+// The row reads the box, not the state, so it is right the first time it draws
+// even before any edit has been seen.
+test('a box that already holds a draft draws the row on the first draw', async ($, on) => {
+  standIns(on)
+  expect(JSON.stringify(await draw($, on))).toContain('"label":"Enhance"')
+})
+
+// The row offers a second way out besides enhancing: send the draft exactly as
+// typed. It is the same thing Enter does, so it carries no chord.
+test('the band offers Send beside Enhance', async ($, on) => {
+  standIns(on)
+  const band = JSON.stringify(await draw($, on))
+  expect(band).toContain('"label":"Send"')
+  expect(band).toContain('"hotkey":"s"')
+})
+
+// Send submits the words the person typed, as their own. Without `asUser` the
+// model would read them under this mod's name.
+test('Send submits the draft as the person typed it', async ($, on) => {
+  standIns(on)
+  await draw($, on)
+  await press($, 'send')
+  expect(submitted).toEqual([{ text: 'make it better', asUser: true }])
+})
+
+// The box is emptied before the prompt is submitted, not after: a prompt sent
+// while a turn runs is queued, and text left in the box through all of it
+// invites a second send.
+test('Send empties the box before it submits', async ($, on) => {
+  standIns(on)
+  await draw($, on)
+  await press($, 'send')
+  expect(fills).toEqual([''])
+  expect(submitted).toHaveLength(1)
+})
+
+// A submission the engine drops puts the draft back, with the reason in the row,
+// rather than losing what the person wrote.
+test('a dropped send puts the draft back and says why', async ($, on) => {
+  standIns(on, { 'prompt.submit': () => ({ drop: 'a Stop stands' }) })
+  await draw($, on)
+  await press($, 'send')
+  expect(fills).toEqual(['', 'make it better'])
+  expect(JSON.stringify(await draw($, on))).toContain('a Stop stands')
+})
+
+// A throw must not vanish into the `void` a press runs under, and must not take
+// the draft with it. The harness answers a throwing stand-in with its own
+// message, so what is asserted is the shape: a failure in the row, the draft
+// back in the box, and the row still offering Enhance.
+test('a throwing send puts the draft back and names it', async ($, on) => {
+  standIns(on, {
+    'prompt.submit': () => { throw new Error('the ingress is closed') },
+  })
+  await draw($, on)
+  await press($, 'send')
+  expect(fills).toEqual(['', 'make it better'])
+  const band = JSON.stringify(await draw($, on))
+  expect(band).toContain('"color":"error"')
+  expect(band).toContain('sending failed')
+  expect(band).toContain('"label":"Enhance"')
+})
+
+// A send leaves nothing to revert: the rewrite it would put back belongs to a
+// draft that has gone.
+test('a send leaves nothing to revert', async ($, on) => {
+  standIns(on)
+  await draw($, on)
+  await press($, 'enhance')
+  expect(JSON.stringify(await draw($, on))).toContain('"label":"Revert"')
+  await press($, 'send')
+  expect(JSON.stringify(await draw($, on))).not.toContain('"label":"Revert"')
+})
+
+// The box is the person's while the model works. Emptying it, editing it or
+// sending it means they moved on, so a rewrite still in flight must not land
+// over what they did instead.
+test('a rewrite is dropped where the draft left the box under it', async ($, on) => {
+  standIns(on, {
+    'model.fork': async () => {
+      // What the person does while the model is thinking: the box is emptied.
+      boxText = ''
+      return { value: { isAnswered: true, text: '{"text":"rewritten"}' } }
+    },
+  })
+  await draw($, on)
+  await press($, 'enhance')
+  expect(filledWith).toBe(null)
+  expect(JSON.stringify(await draw($, on))).not.toContain('rewritten')
+})
+
+// A failure is said about a draft. A draft that has gone leaves nothing to
+// describe, and holding the complaint would greet the next draft with a
+// remark about the one before it.
+test('a failure about a draft that left the box is not held', async ($, on) => {
+  standIns(on, {
+    'model.fork': async () => {
+      boxText = ''
+      return { value: { isAnswered: false, reason: 'api-error', status: 500 } }
+    },
+  })
+  await draw($, on)
+  await press($, 'enhance')
+  // The box is empty, so the row is not drawn at all — and nothing is held for
+  // the next draft.
+  expect(JSON.stringify(await draw($, on))).not.toContain('500')
+  boxText = 'a new draft'
+  expect(JSON.stringify(await draw($, on))).not.toContain('500')
+})
+
+
 
 // The chord is what works from the composer. The band drew `e:` here instead,
 // which named a letter that does nothing unless the band holds the keyboard.

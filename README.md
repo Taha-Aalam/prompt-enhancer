@@ -16,13 +16,21 @@ Answer `y` to add the marketplace, then choose the user scope.
 
 ## Use
 
-The band above your prompt carries the control: `🪄 Prompt Enhancer   Ctrl+E: [ Enhance ]`.
+The band above your prompt appears **once you have written something in it**, and goes when the
+box is empty again. With nothing typed there is nothing to enhance and nothing to send, so the
+row is not there through a turn that has nothing to do with it.
+
+It carries both halves of the choice: `🪄 Prompt Enhancer   Ctrl+E: [ Enhance ]   [ Send ]`.
+
+**Enhance** rewrites the rough prompt in your composer. **Send** submits it exactly as you typed
+it — the same thing Enter does, for when the band is what has the keyboard. Once a rewrite is in
+the box the first button becomes `Ctrl+U: [ Revert ]`, which puts your original draft back.
+Revert is offered only for the rewrite that is in the box: edit or empty it, and the draft is
+yours again, with nothing to revert.
 
 The band is one site every mod draws into, so this one adds its row above whatever the mods
-beneath it draw — skins' usage band, another mod's progress — rather than taking the site.
-
-Click it to rewrite the rough prompt in your composer. Once a rewrite is in the box the button
-becomes `Ctrl+U: [ Revert ]`, which puts your original draft back.
+beneath it draw — skins' usage band, another mod's progress — rather than taking the site. With
+an empty box it adds nothing and leaves them their band.
 
 If the draft leaves something out that would change the answer, the model asks **at most two**
 questions before writing — a real dialog with options, using Claude Code's own question UI. Your
@@ -32,7 +40,8 @@ gets no dialog at all, which is most of them.
 You can also run `/prompt-enhance` from anywhere.
 
 Either way the rewrite lands **in the composer, not in the conversation**. Read it, edit it,
-and send it yourself — nothing is submitted without you.
+and send it yourself — nothing is submitted without you. The one thing that does submit is
+**Send**, and only because you pressed it.
 
 ## Keyboard
 
@@ -63,10 +72,11 @@ a button to borrow and no built-in feature can take the chord away later. Keep t
 as it is written — that is the only context where these chords fire. Change the keys freely;
 only the two actions must stay.
 
-**`e`** and **`r`** also work, but only once the band holds the keyboard — press `ctrl+x` `tab`
-(within 3 seconds of each other), or click the band, then press the letter. That route is why
-`Ctrl+E` is what the button advertises: a terminal that eats the `ctrl+x` prefix also eats
-`e`, but it has no reason to eat `Ctrl+E`.
+**`e`**, **`r`** and **`s`** also work, but only once the band holds the keyboard — press `ctrl+x`
+`tab` (within 3 seconds of each other), or click the band, then press the letter. That route is
+why `Ctrl+E` is what the button advertises: a terminal that eats the `ctrl+x` prefix also eats
+`e`, but it has no reason to eat `Ctrl+E`. `s` sends; it carries no chord of its own, because
+Enter already does exactly that from the composer.
 
 Either way `esc` returns focus to the composer.
 
@@ -117,6 +127,11 @@ never the first thing tried.
 - Revert uses `Ctrl+U` rather than `Ctrl+R` because `Ctrl+R` is history search in every context
   by default; taking it would cost you that. `Ctrl+U` is unbound, so it costs nothing.
 - A failed rewrite leaves your draft exactly as it was and says why, in the band.
+- A rewrite still in flight is dropped if the draft it was written for has left the box — you
+  edited it, emptied it or sent it while the model was thinking. What you did stays.
+- Send empties the box before it submits, and puts the draft back if the submission is refused
+  or throws. A prompt sent while a turn is running is queued, and text left in the box through
+  all of that invites a second send.
 
 ## Development
 

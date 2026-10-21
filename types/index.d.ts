@@ -28,6 +28,8 @@ declare module 'claude-code' {
       skills: Skill[]
       phase: Phase
       context: Context
+      /** Whether the box held a draft at the last change to it; `null`, nobody looked. */
+      draft: boolean | null
     }
   }
 }
