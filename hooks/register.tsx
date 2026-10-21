@@ -107,11 +107,125 @@ const readProjectGuide = async ($: any): Promise<string> => {
   }
 }
 
+/**
+ * Whether the prompt box held a draft at the last change to it; `null`, nobody
+ * has looked yet.
+ *
+ * The row is drawn only while the box holds a draft, and the band's props do
+ * not change as the person types, so nothing would redraw it when the box goes
+ * from empty to written or back. The band reads this value while it draws,
+ * which subscribes that drawing to it, so writing it here is what redraws the
+ * row at exactly those two moments — and nothing else is redrawn with it, where
+ * `$.ui.invalidate` would redraw every site in the session on every first
+ * keystroke.
+ *
+ * It is state, not a module variable, because it is a fact about this session's
+ * box: a hot reload starts the module's variables over while the box stays as
+ * the person left it.
+ */
+const draft = atom({ plugin: 'prompt-enhancer', key: 'draft' } as const, null as boolean | null)
+
+/** Puts the row back to rest: no rewrite left to revert, nothing left failed. */
+const rest = async ($: any) => {
+  if ((await read($, applied)) !== null) await update($, applied, () => null)
+  if ((await read($, phase)).kind === 'failed') await update($, phase, () => ({ kind: 'idle' }))
+}
+
+/**
+ * Records a failure in the row — unless the draft it was about has left the box.
+ *
+ * A rewrite outlives the draft that asked for it: the person can empty the box
+ * while the model works, and the failure then lands in a row that is not drawn.
+ * Held, it would greet the next draft they write with a complaint about the one
+ * before it, so a failure that has nothing left to describe is dropped.
+ */
+const fail = async ($: any, reason: string) => {
+  const box = await $.prompt.read()
+  await update($, phase, () =>
+    box.text.trim() === '' ? { kind: 'idle' } : { kind: 'failed', reason },
+  )
+}
+
+/**
+ * Follows the box after every change to it.
+ *
+ * The row exists for a draft, so the two moments the box goes empty or stops
+ * being empty are the only ones that change what it shows; a keystroke that
+ * leaves the box still written changes nothing, and redrawing for it would
+ * redraw the row, and every other mod's band beneath it, for nothing.
+ *
+ * The write is what redraws the row: the band reads the value while it draws,
+ * so a write reaches it. The invalidate is the belt to that braces — a redraw
+ * asked for on the two moments a draft starts and stops, which is nothing next
+ * to a redraw on every keystroke, and which stands in case the reading that
+ * subscribes the band did not happen on the pass-through path the empty box
+ * takes.
+ *
+ * A draft that has left the box takes the row's state with it: there is no
+ * rewrite left to revert, and a failure was said about a draft that is gone.
+ */
+const follow = async ($: any, text: string) => {
+  const isDraft = text.trim() !== ''
+  if (isDraft === (await read($, draft))) return
+  await update($, draft, () => isDraft)
+  $.ui.invalidate('ui.render')
+  if (!isDraft) await rest($)
+}
+
+/**
+ * Sends the draft as it stands, as the person's own words.
+ *
+ * The box is emptied first and the text sent second. A prompt submitted while a
+ * turn runs is queued and may not enter until that turn ends, so text left in
+ * the box through all of it invites a second send; emptied first, the row goes
+ * with the draft it was drawn for. Nothing is lost to a refusal: a submission
+ * the engine drops, or a call that throws, puts the draft back where it was,
+ * with the reason in the row.
+ *
+ * `asUser` is what pressing Send means. Without it the model reads the prompt
+ * under the mod's name — "The prompt-enhancer plugin sent a message" — which is
+ * the right frame for a mod's own words and the wrong one for the words the
+ * person typed and chose to send unchanged.
+ */
+const send = async ($: any) => {
+  const box = await $.prompt.read()
+  const text = box.text
+  if (text.trim() === '') return
+  const last: Applied | null = await read($, applied)
+
+  const cleared = await $.prompt.fill({ text: '', mode: 'replace' })
+  if (!cleared.isFilled) {
+    $.ui.status(`the prompt bar would not clear: ${cleared.refusal ?? 'unknown refusal'}`)
+    return
+  }
+
+  const restore = async (reason: string) => {
+    const back = await $.prompt.fill({ text, mode: 'replace' })
+    if (back.isFilled && last !== null) await update($, applied, () => last)
+    $.ui.status(reason)
+    await fail($, reason)
+  }
+
+  try {
+    const result: any = await $.prompt.submit({ text, asUser: true })
+    if (typeof result?.drop === 'string') {
+      await restore(`the prompt was not sent: ${result.drop}`)
+      return
+    }
+    await rest($)
+  } catch (err) {
+    // A throw here would vanish into the `void` the press runs under.
+    const detail = err instanceof Error ? err.message : String(err)
+    $.ui.log(`sending threw: ${detail}`, { to: 'debug' })
+    await restore(`sending failed: ${detail}`)
+  }
+}
+
 const applyText = async ($: any, before: string, after: string) => {
   const filled = await $.prompt.fill({ text: after, mode: 'replace' })
   if (!filled.isFilled) {
     $.ui.status(`the prompt bar would not take it: ${filled.refusal ?? 'unknown refusal'}`)
-    await update($, phase, () => ({ kind: 'failed', reason: 'the prompt bar refused the rewrite' }))
+    await fail($, 'the prompt bar refused the rewrite')
     return false
   }
   await update($, applied, () => ({ before, after }))
@@ -164,13 +278,13 @@ const enhance = async ($: any) => {
     if (typeof first !== 'string') {
       const reason = `${first.why}; the draft is unchanged`
       $.ui.status(reason)
-      await update($, phase, () => ({ kind: 'failed', reason }))
+      await fail($, reason)
       return
     }
     const parsed = parseEnhance(first)
     if (parsed === null) {
       $.ui.status('the rewrite was not in the form asked for; the draft is unchanged')
-      await update($, phase, () => ({ kind: 'failed', reason: 'the rewrite was not in the form asked for' }))
+      await fail($, 'the rewrite was not in the form asked for')
       return
     }
     $.ui.log(`skills ${JSON.stringify(parsed.skills)}`, { to: 'debug' })
@@ -188,6 +302,16 @@ const enhance = async ($: any) => {
       }
     }
 
+    // The box is the person's while the model works. A rewrite is put in only
+    // where the draft it was written for is still the one in the box: emptying
+    // it, editing it or sending it means they moved on, and landing the rewrite
+    // over what they did instead would undo them.
+    const now = await $.prompt.read()
+    if (now.text !== box.text) {
+      $.ui.status('the draft changed while it was being rewritten; the rewrite was dropped')
+      await update($, phase, () => ({ kind: 'idle' }))
+      return
+    }
     await applyText($, box.text, text)
   } catch (err) {
     // Nothing above may escape into the `void` a press runs under: an unhandled
@@ -195,7 +319,7 @@ const enhance = async ($: any) => {
     const detail = err instanceof Error ? err.message : String(err)
     $.ui.status(`enhancing failed: ${detail}`)
     $.ui.log(`enhancing threw: ${detail}`, { to: 'debug' })
-    await update($, phase, () => ({ kind: 'failed', reason: detail }))
+    await fail($, detail)
   }
 }
 
@@ -255,8 +379,40 @@ export const register: Register = on => {
     return { text: 'Prompt enhanced.' }
   })
 
+  // Every way the box changes is one of these two: an edit (a key, a paste, an
+  // undo), which resolves the box the editor shows, and everything else — a
+  // recalled history entry, a clear, a fill, a submit taking the draft.
+  on('prompt.edit', async ($, e, next) => {
+    const result = await next(e)
+    await follow($, result.text)
+    return result
+  })
+
+  on('prompt.change', async ($, e, next) => {
+    const result = await next(e)
+    await follow($, result.text)
+    return result
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
+
+    // Read before the box is, and before any return: the read is what subscribes
+    // this drawing to the value, and a drawing that has already returned is one
+    // `follow` cannot redraw. An empty box is exactly the drawing that has to be
+    // redrawn when the person types, so this is the one read that must happen
+    // however the row turns out.
+    await read($, draft)
+
+    // The row exists for a draft and for nothing else: with the box empty there
+    // is nothing to enhance and nothing to send, and a band that sat there
+    // through every turn was one more line of chrome above a prompt it had no
+    // business describing. The box is read as it stands rather than remembered,
+    // so the row is right on the first draw of a session that starts with a
+    // draft already in it.
+    const box = await $.prompt.read()
+    if (box.text.trim() === '') return next(e)
+
     const last: Applied | null = await read($, applied)
     const now: Phase = await read($, phase)
     const { Box, Text, Button } = $.ui.resolve(e)
@@ -313,6 +469,17 @@ export const register: Register = on => {
             />
           </Box>
         )}
+        {/* The other half of the choice: send the draft exactly as typed. It is
+            the same thing Enter does, so it carries no chord — every free one is
+            already spent, and a chord that only works here would be a second way
+            to do what the composer's own key does. Its letter reads once the
+            band holds the keyboard, like the others. */}
+        <Button
+          key="send"
+          label="Send"
+          hotkey="s"
+          onPress={() => { void send($) }}
+        />
       </Box>
     )
 
